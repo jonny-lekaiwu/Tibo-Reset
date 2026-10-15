@@ -1,0 +1,103 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tibo RESET 提醒</title><link rel="stylesheet" href="/tibo-monitor.css"><style>body{margin:0;background:#0c111a;font-family:system-ui,"Microsoft YaHei",sans-serif}button,input{font:inherit}footer{text-align:center;color:#a9b7ca;padding:20px;font-size:13px}a{color:#48b9ff}</style></head><body><main class="tibo-page">
+    
+    <header class="page-head">
+      <div class="page-head-copy"><h1><span>Tibo</span> <span class="title-topic">RESET 提醒</span></h1>
+      <p>不用反复刷动态，有新进展就邮件提醒</p></div>
+      <img class="tibo-mascot" src="/images/tibo-reset-mascot.webp" width="96" height="96" alt="Tibo 举起 RESET，下方人群伸手期待" />
+    </header>
+
+    <section class="status-card" aria-live="polite" aria-busy="true">
+      <div class="status-copy">
+        <h2 id="day" class="day">正在获取动态…</h2>
+        <div id="current-posts" class="current-posts" tabindex="0" role="region" aria-label="当天动态，可滚动查看更多"><p class="muted">正在读取 Tibo 最新动态…</p></div>
+      </div>
+      <div id="reset-indicator" class="reset-indicator" role="img" aria-label="RESET" hidden>
+        <div class="reset-certificate" aria-hidden="true"><span class="reset-stamp">RESET</span></div>
+      </div>
+    </section>
+
+    <section class="subscribe-card" aria-label="邮件订阅">
+      <form id="subscribe-form">
+        <input id="email" type="email" aria-label="邮箱地址" autocomplete="email" maxlength="254" placeholder="输入你的邮箱" required />
+        <button id="subscribe-button" type="submit" disabled>提醒我</button>
+      </form>
+      <div class="subscribe-foot">
+        <div id="subscribe-message" class="message" role="status" hidden></div>
+        <button id="test-button" class="test-button" type="button" hidden>发送测试邮件</button>
+      </div>
+    </section>
+
+    <section class="history-section">
+      <div class="section-heading history-heading">
+        <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></svg></span>
+        <h2>往日记录</h2>
+      </div>
+      <div id="history" class="history" tabindex="0" role="region" aria-label="最近状态，可滚动查看更多"><span class="muted">正在加载…</span></div>
+    </section>
+  </main><footer>Tibo-Reset · GPL-3.0-only · <a href="https://github.com/jonny-lekaiwu/Tibo-Reset">源代码</a></footer><script>
+  const API='/api/tibo-monitor';
+  const $=id=>document.getElementById(id);
+  const message=(text,error=false)=>{const el=$('subscribe-message');el.hidden=false;el.textContent=text;el.classList.toggle('error',error)};
+  function renderStatus(d){
+    const current=d.current;
+    if(!current || !Number.isFinite(Number(current.day))) throw Error('状态数据不完整');
+    const reset=current.result==='RESET';
+    const landed=reset&&current.phase==='LIVE';
+    $('day').textContent='Day '+current.day;
+    const card=document.querySelector('.status-card');
+    card.classList.toggle('waiting',reset&&!landed);
+    card.classList.toggle('live',landed);
+    card.classList.toggle('has-reset',reset);
+    $('reset-indicator').hidden=!reset;
+    $('reset-indicator').setAttribute('aria-label',landed?'RESET 已完成':'RESET 待完成');
+    const posts=(Array.isArray(d.currentPosts)&&d.currentPosts.length?[...d.currentPosts]:[{text:current.text,publishedAt:current.publishedAt}]).sort((a,b)=>(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0));
+    const timeline=$('current-posts');timeline.replaceChildren();
+    function postNode(post,last){
+      const item=document.createElement('div');item.className='timeline-item';
+      const time=document.createElement('time');time.className='timeline-time';
+      const date=new Date(post.publishedAt);
+      if(post.publishedAt&&!Number.isNaN(date.getTime())){time.dateTime=post.publishedAt;time.textContent=date.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false})}
+      const text=document.createElement('p');text.className='timeline-text';text.textContent=post.text||'';
+      item.append(time,text);
+      if(last)item.setAttribute('data-last','');
+      return item;
+    }
+    posts.forEach((post,index)=>timeline.appendChild(postNode(post,index===posts.length-1)));
+    if(typeof requestAnimationFrame==='function')requestAnimationFrame(sizePostWindow);
+    const history=$('history');history.replaceChildren();
+    const previous=Array.isArray(d.history)?d.history.filter(x=>x.day!==current.day):[];
+    previous.forEach(x=>{const row=document.createElement('div');row.className='history-row';const day=document.createElement('b');day.textContent='Day '+x.day;const result=document.createElement('span');result.textContent=x.result;row.append(day,result);history.appendChild(row)});
+    if(!previous.length){const empty=document.createElement('p');empty.className='muted';empty.textContent='暂无往日记录';history.appendChild(empty)}
+  }
+  function sizePostWindow(){
+    const timeline=$('current-posts');
+    if(timeline.children.length>2){
+      const top=timeline.getBoundingClientRect().top;
+      const secondBottom=timeline.children[1].getBoundingClientRect().bottom;
+      timeline.style.maxHeight=Math.min(Math.ceil(secondBottom-top+timeline.scrollTop),180)+'px';
+    }else timeline.style.removeProperty('max-height');
+  }
+  let loadingStatus=false;
+  async function loadStatus(){
+    if(loadingStatus)return;
+    loadingStatus=true;
+    const card=document.querySelector('.status-card');
+    card.setAttribute('aria-busy','true');
+    try{const r=await fetch(API+'/analyze',{cache:'no-store',signal:AbortSignal.timeout(20000)});const d=await r.json();if(!r.ok)throw Error(d.error||'获取失败');renderStatus(d)}
+    catch(e){$('day').textContent='暂时无法获取';$('reset-indicator').hidden=true;card.classList.remove('waiting','live','has-reset');$('current-posts').textContent='暂时无法获取动态，请稍后刷新。';$('history').textContent='状态暂不可用'}
+    finally{loadingStatus=false;card.setAttribute('aria-busy','false')}
+  }
+  let subscribing=false;
+  function updateSubscribeButton(){ $('subscribe-button').disabled=subscribing||!$('email').value.trim()||!$('email').validity.valid; }
+  $('email').addEventListener('input',updateSubscribeButton);
+  $('email').addEventListener('change',updateSubscribeButton);
+  $('subscribe-form').addEventListener('submit',async e=>{e.preventDefault();const email=$('email').value.trim();if(subscribing||!email||!$('email').validity.valid)return;const btn=$('subscribe-button');subscribing=true;updateSubscribeButton();btn.textContent='订阅中…';
+    try{const r=await fetch(`${API}/subscribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});const d=await r.json();if(!r.ok)throw Error(d.error||'订阅失败');message('已订阅，有新进展会发邮件给你。');$('test-button').hidden=false;$('test-button').dataset.email=email;localStorage.setItem('tibo-subscriber-email',email)}catch(err){message(err.message||'暂时没订阅成功，请稍后重试。',true)}finally{subscribing=false;updateSubscribeButton();btn.textContent='提醒我'}});
+  $('test-button').addEventListener('click',async()=>{const btn=$('test-button');const email=btn.dataset.email||$('email').value.trim();btn.disabled=true;btn.textContent='发送中…';try{const r=await fetch(`${API}/test-notify`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});const d=await r.json();if(!r.ok)throw Error(d.error||'发送失败');message(d.message||'测试邮件已发送')}catch(err){message(err.message||'发送失败',true)}finally{btn.disabled=false;btn.textContent='发送测试邮件'}});
+  const saved=localStorage.getItem('tibo-subscriber-email');if(saved){$('email').value=saved;$('test-button').hidden=false;$('test-button').dataset.email=saved;message('你已在此浏览器订阅提醒。')}
+  updateSubscribeButton();
+  loadStatus();
+  setInterval(()=>{if(!document.hidden)void loadStatus()},60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void loadStatus()});
+  window.addEventListener('resize',()=>requestAnimationFrame(sizePostWindow));
+</script></body></html>
